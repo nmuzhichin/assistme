@@ -4,9 +4,10 @@ import sys
 import subprocess
 import argparse
 import shutil
-import yaml  # Требуется установить PyYAML (pip install pyyaml)
+import yaml  # pip install pyyaml
 import logging
 import re
+import json
 
 # Определение путей
 HOME_DIR = os.path.expanduser("~")
@@ -20,17 +21,20 @@ ASME_WHISPER_DIR = os.path.join(ASME_DIR, "whisper.cpp")
 ASME_RECORD_FILE = os.path.join(ASME_WORK_DIR, "record.mp3")
 ASME_OUTPUT_FILE = os.path.join(ASME_WORK_DIR, "output.wav")
 
-# Значения по умолчанию для аудио-устройств
+# Значения по умолчанию для аудио-устройств и языка
 DEFAULT_CONFIG = {
-    "audio_input_1": ":0",   # микрофон
-    "audio_input_2": ":3"    # системный звук через BlackHole 16ch
+    "audio_input": ":0",  # микрофон
+    "audio_output": ":3", # системный звук через BlackHole 16ch
+    "lang": "en"          # По умолчанию английский
 }
+
+# Путь к JSON-файлу с переводами (находится рядом со скриптом)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+TRANSLATIONS_FILE = os.path.join(SCRIPT_DIR, "translations.json")
 
 # Создаем необходимые директории до настройки логирования
 os.makedirs(ASME_DIR, exist_ok=True)
 os.makedirs(ASME_WORK_DIR, exist_ok=True)
-
-# Если лог-файл не существует, создаем его пустым
 if not os.path.exists(ASME_LOG_FILE):
     open(ASME_LOG_FILE, 'a').close()
 
@@ -47,31 +51,48 @@ console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
+# Глобальные переменные для i18n
+CURRENT_LANG = "en"
+TRANSLATIONS = {}
+
+def load_translations(file_path):
+    """Загружает переводы из JSON-файла."""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading translations: {e}")
+        return {}
+
+def get_text(key):
+    """Возвращает перевод для заданного ключа с учетом текущего языка."""
+    return TRANSLATIONS.get(CURRENT_LANG, {}).get(key, key)
+
 def run_command(cmd, cwd=None):
     """Выполняет системную команду с логированием и проверкой ошибок."""
-    logger.info(f"Выполнение: {cmd}")
+    logger.info(f"Executing: {cmd}")
     result = subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
-        logger.error(f"Ошибка выполнения команды: {cmd}")
-        logger.error(f"Вывод stdout:\n{result.stdout}")
-        logger.error(f"Вывод stderr:\n{result.stderr}")
+        logger.error(f"Error executing command: {cmd}")
+        logger.error(f"stdout:\n{result.stdout}")
+        logger.error(f"stderr:\n{result.stderr}")
         return False, result.stdout + result.stderr
-    logger.info(f"Команда выполнена успешно: {cmd}")
+    logger.info(f"Command executed successfully: {cmd}")
     return True, result.stdout
 
 def check_brew():
     """Проверяет наличие Homebrew в системе."""
     if shutil.which("brew") is None:
-        logger.error("Homebrew не найден. Пожалуйста, установите Homebrew с https://brew.sh/")
+        logger.error(get_text("brew_not_found"))
         return False
-    logger.info("Homebrew найден.")
+    logger.info(get_text("brew_found"))
     return True
 
 def ensure_directory(path):
     """Создает указанную директорию, если она не существует."""
     if not os.path.isdir(path):
         os.makedirs(path)
-        logger.info(f"Создана директория: {path}")
+        logger.info(get_text("assist_dir_created").format(path))
 
 def ensure_assist_dir():
     """Создает директорию .assistme в домашней папке."""
@@ -84,7 +105,7 @@ def ensure_work_dir():
 def load_config():
     """Загружает конфигурацию из YAML-файла, создавая дефолтную при отсутствии."""
     if not os.path.exists(ASME_CONFIG_FILE):
-        logger.info("Конфигурационный файл не найден, создаю дефолтный.")
+        logger.info("Configuration file not found, creating default.")
         save_config(DEFAULT_CONFIG)
         return DEFAULT_CONFIG
     try:
@@ -93,7 +114,7 @@ def load_config():
             if not config:
                 config = DEFAULT_CONFIG
     except Exception as e:
-        logger.error(f"Ошибка чтения конфигурационного файла: {e}")
+        logger.error(f"Error reading configuration file: {e}")
         config = DEFAULT_CONFIG
     return config
 
@@ -101,62 +122,58 @@ def save_config(config):
     """Сохраняет конфигурацию в YAML-файл."""
     with open(ASME_CONFIG_FILE, "w") as f:
         yaml.dump(config, f)
-    logger.info(f"Конфигурация сохранена в {ASME_CONFIG_FILE}")
+    logger.info(f"Configuration saved in {ASME_CONFIG_FILE}")
 
 def install_command(args):
-    """Команда install: установка Homebrew, ffmpeg, blackhole, клонирование и сборка whisper.cpp.
-    Добавлена оптимизация: если репозиторий уже скачан и собран, то сборка повторно не выполняется."""
+    """Команда install: установка Homebrew, ffmpeg, blackhole, клонирование и сборка whisper.cpp."""
     if not check_brew():
         sys.exit(1)
     
     for pkg in ["ffmpeg", "blackhole-16ch"]:
-        logger.info(f"Устанавливаю {pkg} через brew...")
+        logger.info(get_text("installing_pkg").format(pkg))
         success, _ = run_command(f"brew install {pkg}")
         if not success:
-            logger.error(f"Ошибка установки {pkg}. Прерывание установки.")
+            logger.error(get_text("install_pkg_error").format(pkg))
             sys.exit(1)
     
     ensure_assist_dir()
     ensure_work_dir()
 
-    # Проверка, что репозиторий whisper.cpp уже скачан
     if not os.path.isdir(ASME_WHISPER_DIR):
-        logger.info("Клонирование репозитория whisper.cpp...")
+        logger.info(get_text("cloning_whisper"))
         success, _ = run_command(f"git clone https://github.com/ggerganov/whisper.cpp.git {ASME_WHISPER_DIR}")
         if not success:
-            logger.error("Ошибка клонирования whisper.cpp.")
+            logger.error("Error cloning whisper.cpp.")
             sys.exit(1)
     else:
-        logger.info("Репозиторий whisper.cpp уже существует, пропускаю клонирование.")
+        logger.info(get_text("whisper_exists"))
 
-    # Проверка, скачана ли модель ggml-large-v2
     model_file = os.path.join(ASME_WHISPER_DIR, "models", "ggml-large-v2.bin")
     if not os.path.exists(model_file):
-        logger.info("Скачивание модели ggml-large-v2...")
+        logger.info(get_text("downloading_model"))
         success, _ = run_command("sh ./models/download-ggml-model.sh large-v2", cwd=ASME_WHISPER_DIR)
         if not success:
-            logger.error("Ошибка скачивания модели.")
+            logger.error("Error downloading model.")
             sys.exit(1)
     else:
-        logger.info("Модель ggml-large-v2 уже скачана, пропускаю загрузку модели.")
+        logger.info(get_text("model_exists"))
 
-    # Проверка, собран ли бинарник whisper-cli
     whisper_cli = os.path.join(ASME_WHISPER_DIR, "build", "bin", "whisper-cli")
     if not os.path.exists(whisper_cli):
-        logger.info("Запуск сборки whisper.cpp (cmake)...")
+        logger.info(get_text("building_whisper"))
         success, _ = run_command("cmake -B build", cwd=ASME_WHISPER_DIR)
         if not success:
-            logger.error("Ошибка генерации сборочных файлов (cmake).")
+            logger.error(get_text("build_error"))
             sys.exit(1)
         success, _ = run_command("cmake --build build --config Release", cwd=ASME_WHISPER_DIR)
         if not success:
-            logger.error("Ошибка сборки whisper.cpp.")
+            logger.error(get_text("build_error"))
             sys.exit(1)
     else:
-        logger.info("Бинарный файл whisper-cli уже существует, сборка пропущена.")
-
-    logger.info("Команда install выполнена успешно.")
-    logger.info("Перед началом работы необходимо вручную настроить Multi-Output Device и Aggregate Device для корректной записи системного звука и микрофона")
+        logger.info(get_text("whisper_exists"))
+    
+    logger.info(get_text("install_success"))
+    logger.info(get_text("manual_setup_notice"))
 
 def record_command(args):
     """Команда record: запись звука через ffmpeg с параметрами из конфигурации.
@@ -165,106 +182,121 @@ def record_command(args):
     ensure_work_dir()
     config = load_config()
 
-    # Проверка на существование файла записи
     if os.path.exists(ASME_RECORD_FILE):
-        answer = input(f"Файл {ASME_RECORD_FILE} уже существует. Перезаписать? (y/n): ").strip().lower()
+        answer = input(get_text("file_exists").format(ASME_RECORD_FILE)).strip().lower()
         if answer != 'y':
-            logger.info("Запись отменена пользователем.")
+            logger.info(get_text("record_cancelled"))
             sys.exit(0)
     
-    audio_input_1 = config.get("audio_input_1", DEFAULT_CONFIG["audio_input_1"])
-    audio_input_2 = config.get("audio_input_2", DEFAULT_CONFIG["audio_input_2"])
+    audio_input = config.get("audio_input", DEFAULT_CONFIG["audio_input"])
+    audio_output = config.get("audio_output", DEFAULT_CONFIG["audio_output"])
 
-    ffmpeg_cmd = (f'ffmpeg -f avfoundation -i "{audio_input_1}" '
-                  f'-f avfoundation -i "{audio_input_2}" '
+    ffmpeg_cmd = (f'ffmpeg -f avfoundation -i "{audio_input}" '
+                  f'-f avfoundation -i "{audio_output}" '
                   f'-filter_complex amerge=inputs=2 "{ASME_RECORD_FILE}"')
-    logger.info("Запуск записи звука. Для остановки записи используйте Ctrl+C.")
+    logger.info(get_text("recording"))
     try:
         subprocess.run(ffmpeg_cmd, shell=True, check=True)
     except KeyboardInterrupt:
-        logger.info("Запись остановлена пользователем.")
+        logger.info(get_text("record_cancelled"))
     except subprocess.CalledProcessError as e:
-        logger.error("Ошибка записи звука:")
+        logger.error(get_text("record_error"))
         logger.error(e)
         sys.exit(1)
 
 def transcribate_command(args):
-    """Команда transcribate: конвертация аудиофайла, транскрибация и сохранение результатов в рабочей директории.
-    Перед началом транскрибации запрашивает название сессии и переименовывает директорию WORK_DIR."""
+    """Команда transcribate: конвертация аудиофайла, транскрибация и сохранение результатов.
+    Перед транскрибацией запрашивает название сессии и переименовывает рабочую директорию."""
     ensure_assist_dir()
     ensure_work_dir()
     
     if not os.path.exists(ASME_RECORD_FILE):
-        logger.error(f"Файл записи {ASME_RECORD_FILE} не найден. Сначала выполните команду record.")
+        logger.error(f"Recording file {ASME_RECORD_FILE} not found. Run the record command first.")
         sys.exit(1)
     
-    # Запрос названия сессии у пользователя с проверкой допустимых символов (латинские буквы, цифры, _ и -)
-    session_name = input("Введите название для сессии (разрешены латинские буквы, цифры, _ и -): ").strip()
+    session_name = input(get_text("session_prompt")).strip()
     while not re.fullmatch(r'[A-Za-z0-9_-]+', session_name):
-        print("Введено недопустимое название. Повторите ввод.")
-        session_name = input("Введите название для сессии: ").strip()
+        print(get_text("invalid_session"))
+        session_name = input(get_text("session_prompt")).strip()
     
     new_session_dir = os.path.join(ASME_DIR, f"session-{session_name}")
     if os.path.exists(new_session_dir):
-        logger.error(f"Директория {new_session_dir} уже существует. Выберите другое название.")
+        logger.error(get_text("session_exists").format(new_session_dir))
         sys.exit(1)
     
-    # Переименовываем текущую рабочую директорию в новую сессии
     try:
         os.rename(ASME_WORK_DIR, new_session_dir)
-        logger.info(f"Директория сессии переименована в {new_session_dir}")
+        logger.info(get_text("session_renamed").format(new_session_dir))
     except Exception as e:
-        logger.error(f"Ошибка переименования директории сессии: {e}")
+        logger.error(get_text("session_rename_error").format(e))
         sys.exit(1)
     
-    # Обновляем глобальные переменные для работы с новыми путями
     TMP_ASME_WORK_DIR = new_session_dir
     TMP_ASME_RECORD_FILE = os.path.join(TMP_ASME_WORK_DIR, "record.mp3")
     TMP_ASME_OUTPUT_FILE = os.path.join(TMP_ASME_WORK_DIR, "output.wav")
     
-    # Конвертация аудиофайла
     ffmpeg_conv_cmd = (f'ffmpeg -i "{TMP_ASME_RECORD_FILE}" -af "lowpass=f=4000" '
                        f'-ar 16000 -ac 1 -c:a pcm_s16le "{TMP_ASME_OUTPUT_FILE}"')
-    logger.info("Конвертация аудиофайла...")
+    logger.info(get_text("conversion_started"))
     success, _ = run_command(ffmpeg_conv_cmd)
     if not success:
-        logger.error("Ошибка конвертации файла.")
+        logger.error(get_text("conversion_error"))
         sys.exit(1)
-
-    # Запуск транскрибации
+    
     whisper_cli = os.path.join(ASME_WHISPER_DIR, "build", "bin", "whisper-cli")
     model_path = os.path.join(ASME_WHISPER_DIR, "models", "ggml-large-v2.bin")
     if not os.path.exists(whisper_cli):
-        logger.error("Бинарный файл whisper-cli не найден. Проверьте, что команда install выполнена успешно.")
+        logger.error("whisper-cli binary not found. Ensure the install command was successful.")
         sys.exit(1)
     
     transcribe_cmd = (f'"{whisper_cli}" -t 8 -p 2 -m "{model_path}" '
                       f'-l ru --output-txt -f "{TMP_ASME_OUTPUT_FILE}"')
-    logger.info("Запуск транскрибации...")
+    logger.info(get_text("transcription_started"))
     success, output = run_command(transcribe_cmd, cwd=TMP_ASME_WORK_DIR)
     if not success:
-        logger.error("Ошибка транскрибации.")
+        logger.error(get_text("transcription_error"))
         sys.exit(1)
     else:
-        logger.info("Транскрибация завершена успешно. Результат:")
+        logger.info(get_text("transcription_success"))
         logger.info(output)
+        print(get_text("transcription_success"))
         print(output)
-
-    logger.info(f"Временные файлы и результат транскрибации сохранены в {TMP_ASME_WORK_DIR}")
+    
+    logger.info(get_text("files_saved").format(TMP_ASME_WORK_DIR))
 
 def main():
-    parser = argparse.ArgumentParser(description="Assist Me: CLI инструмент для транскрибации на macOS")
-    subparsers = parser.add_subparsers(dest="command", help="Доступные команды")
+    # Предварительный разбор для определения языка
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("-l", "--language", choices=["en", "ru"], help="Language selection")
+    pre_args, _ = pre_parser.parse_known_args()
+    
+    config = load_config()
+    global CURRENT_LANG, TRANSLATIONS
+    CURRENT_LANG = pre_args.language or config.get("lang", "en")
+    TRANSLATIONS = load_translations(TRANSLATIONS_FILE)
+    if CURRENT_LANG not in TRANSLATIONS:
+        CURRENT_LANG = "en"
+    
+    # Создание основного парсера с локализованными описаниями
+    parser = argparse.ArgumentParser(description=get_text("cli_description"), add_help=False)
 
-    parser_install = subparsers.add_parser("install", help="Установка зависимостей")
+    parser._positionals = parser.add_argument_group(get_text("cmd_help"))
+    parser._optionals = parser.add_argument_group(get_text("options_help"))
+
+    parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help=get_text("help_help"))
+    parser.add_argument("-l", "--language", choices=["en", "ru"], help=get_text("lang_help"))
+    
+    subparsers = parser.add_subparsers(dest="command", help=get_text("commands_help"))
+    
+    parser_install = subparsers.add_parser("install", help=get_text("install_help"))
     parser_install.set_defaults(func=install_command)
-
-    parser_record = subparsers.add_parser("record", help="Запись звука")
+    
+    parser_record = subparsers.add_parser("record", help=get_text("record_help"))
     parser_record.set_defaults(func=record_command)
-
-    parser_transcribate = subparsers.add_parser("transcribate", help="Выполнение транскрибации")
+    
+    parser_transcribate = subparsers.add_parser("transcribate", help=get_text("transcribate_help"))
     parser_transcribate.set_defaults(func=transcribate_command)
-
+    
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
