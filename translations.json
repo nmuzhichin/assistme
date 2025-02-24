@@ -35,8 +35,9 @@
     "record_help": "Record audio using ffmpeg",
     "transcribate_help": "Convert recording and perform transcription",
     "help_help": "Show this help message and exit",
-    "cmd_help": "Available commands",
-    "options_help": "Options"
+    "options_help": "Options",
+    "version_help": "Show version and exit",
+    "env_help": "Set up the environment"
   },
   "ru": {
     "brew_not_found": "Homebrew не найден. Пожалуйста, установите Homebrew с https://brew.sh/",
@@ -73,8 +74,9 @@
     "install_help": "Установка зависимостей",
     "record_help": "Запись звука",
     "transcribate_help": "Выполнение транскрибации",
-    "help_help": "Отобразить помощь и выйти",
-    "cmd_help": "Доступные команды",
-    "options_help": "Опции"
+    "help_help": "Отобразить помощь",
+    "options_help": "Опции",
+    "version_help": "Показать версию",
+    "env_help": "Конфигурирование окружения"
   }
 }

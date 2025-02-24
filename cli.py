@@ -23,9 +23,11 @@ ASME_OUTPUT_FILE = os.path.join(ASME_WORK_DIR, "output.wav")
 
 # Значения по умолчанию для аудио-устройств и языка
 DEFAULT_CONFIG = {
-    "audio_input": ":0",  # микрофон
-    "audio_output": ":3", # системный звук через BlackHole 16ch
-    "lang": "en"          # По умолчанию английский
+    "lang": "en",           # язык по умолчанию
+    "audio": {
+        "input":  ":0",     # микрофон
+        "output": ":3"      # системный звук
+    }
 }
 
 # Путь к JSON-файлу с переводами (находится рядом со скриптом)
@@ -188,8 +190,9 @@ def record_command(args):
             logger.info(get_text("record_cancelled"))
             sys.exit(0)
     
-    audio_input = config.get("audio_input", DEFAULT_CONFIG["audio_input"])
-    audio_output = config.get("audio_output", DEFAULT_CONFIG["audio_output"])
+    audio = config.get("audio", DEFAULT_CONFIG["audio"])
+    audio_input = audio.get("input")
+    audio_output = audio.get("output")
 
     ffmpeg_cmd = (f'ffmpeg -f avfoundation -i "{audio_input}" '
                   f'-f avfoundation -i "{audio_output}" '
@@ -264,10 +267,18 @@ def transcribate_command(args):
     
     logger.info(get_text("files_saved").format(TMP_ASME_WORK_DIR))
 
+def get_version():
+    return 'debug'
+
+def set_setting(arg):
+    for n in arg.kv:
+        k, v = n.split("=")
+        # todo: save to yaml
+
 def main():
     # Предварительный разбор для определения языка
     pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("-l", "--language", choices=["en", "ru"], help="Language selection")
+    pre_parser.add_argument("-l", "--language", choices=["en", "ru"], help="")
     pre_args, _ = pre_parser.parse_known_args()
     
     config = load_config()
@@ -280,23 +291,34 @@ def main():
     # Создание основного парсера с локализованными описаниями
     parser = argparse.ArgumentParser(description=get_text("cli_description"), add_help=False)
 
-    parser._positionals = parser.add_argument_group(get_text("cmd_help"))
-    parser._optionals = parser.add_argument_group(get_text("options_help"))
+    opt_group = parser.add_argument_group(get_text("options_help"))
+    opt_group.add_argument('-l', '--language', choices=["en", "ru"], help=get_text("lang_help"))
+    opt_group.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help=get_text("help_help"))
+    opt_group.add_argument('-v', '--version', action='version', version=get_version(), help=get_text("version_help"))
+    
+    # Первый уровень
+    subparsers = parser.add_subparsers(dest="command", help="", title=get_text("commands_help"), metavar="")
 
-    parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help=get_text("help_help"))
-    parser.add_argument("-l", "--language", choices=["en", "ru"], help=get_text("lang_help"))
-    
-    subparsers = parser.add_subparsers(dest="command", help=get_text("commands_help"))
-    
-    parser_install = subparsers.add_parser("install", help=get_text("install_help"))
-    parser_install.set_defaults(func=install_command)
-    
     parser_record = subparsers.add_parser("record", help=get_text("record_help"))
     parser_record.set_defaults(func=record_command)
     
     parser_transcribate = subparsers.add_parser("transcribate", help=get_text("transcribate_help"))
     parser_transcribate.set_defaults(func=transcribate_command)
     
+    # Второй уровень
+    parser_env = subparsers.add_parser("env", help=get_text("env_help"), add_help=False)
+    env_ops_group = parser_env.add_argument_group(get_text("options_help"))
+    env_ops_group.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help=get_text("help_help"))
+    
+    sys_subparsers = parser_env.add_subparsers(dest="command", help="", title=get_text("commands_help"), metavar="")
+    parser_install = sys_subparsers.add_parser("install", help=get_text("install_help"))
+    parser_install.set_defaults(func=install_command)
+
+    parser_setting_setter = sys_subparsers.add_parser("set", help="set setting")
+    parser_setting_setter.add_argument(dest="kv", help="set key=value", nargs="...")
+    parser_setting_setter.set_defaults(func=set_setting)
+    
+
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
