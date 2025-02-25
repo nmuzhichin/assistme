@@ -123,7 +123,7 @@ Assist Me is a command-line tool that automates the process of recording and tra
 The default configuration file is stored at `~/.assistme/config.yaml` and is created automatically on first run. It includes settings such as:
 
 - **Language:** `lang` (default: "en")
-- **Audio Devices:** `audio.input` and `audio.output`
+- **Audio Devices:** `audio.input` (default: ":0") and `audio.output` (default: ":3")
 - **Other Options:** e.g. `keep_source`, `stream_mode`
 
 ## Internationalization
