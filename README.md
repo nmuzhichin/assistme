@@ -63,13 +63,13 @@ Assist Me is a command-line tool that automates the process of recording and tra
 - **Install Dependencies and Build whisper.cpp:**
 
   ```bash
-  ./cli.py env install
+  ./assistme.py env install
   ```
 
 - **Record Audio:**
 
   ```bash
-  ./cli.py record
+  ./assistme.py record
   ```
   
   Aliases: `r` or `rec`
@@ -77,7 +77,7 @@ Assist Me is a command-line tool that automates the process of recording and tra
 - **Transcribe Audio:**
 
   ```bash
-  ./cli.py transcribate
+  ./assistme.py transcribate
   ```
   
   Aliases: `t` or `trb`
@@ -85,19 +85,19 @@ Assist Me is a command-line tool that automates the process of recording and tra
 - **Combined Record and Transcribe (Stream Mode):**
 
   ```bash
-  ./cli.py record --stream
+  ./assistme.py record --stream
   ```
 
 - **Update Configuration Settings:**
 
   ```bash
-  ./cli.py env set audio.input=:0 audio.output=:3 lang=ru
+  ./assistme.py env set audio.input=:0 audio.output=:3 lang=ru
   ```
 
 - **Retrieve a Configuration Setting:**
 
   ```bash
-  ./cli.py env get audio.input
+  ./assistme.py env get audio.input
   ```
 
 ### Global Options
@@ -107,7 +107,7 @@ Assist Me is a command-line tool that automates the process of recording and tra
   Override the interface language with the `-l` flag:
 
   ```bash
-  ./cli.py -l en record
+  ./assistme.py -l en record
   ```
 
 - **Custom Configuration File:**
@@ -115,7 +115,7 @@ Assist Me is a command-line tool that automates the process of recording and tra
   Specify a custom configuration file using the `-c/--config` flag:
 
   ```bash
-  ./cli.py -c /path/to/myconfig.yaml record
+  ./assistme.py -c /path/to/myconfig.yaml record
   ```
 
 ## Configuration

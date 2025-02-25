@@ -1,5 +1,5 @@
 clean:
-	rm -rf ./dist ./build cli.spec
+	rm -rf ./dist ./build assistme.spec
 
 build:
-	pyinstaller --onefile --nowindow --log-level=WARN --add-data="translations.json:." --optimize 2 cli.py
+	pyinstaller --onefile --nowindow --log-level=WARN --add-data="translations.json:." --name=assistme --optimize 2 assistme.py
