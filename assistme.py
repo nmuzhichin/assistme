@@ -5,7 +5,6 @@ import subprocess
 import argparse
 import shutil
 import yaml  # pip install pyyaml
-import logging
 import re
 import json
 
@@ -46,16 +45,10 @@ if not os.path.exists(ASME_LOG_FILE):
     open(ASME_LOG_FILE, 'a').close()
 
 # Настройка логирования: вывод в файл и консоль
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-file_handler = logging.FileHandler(ASME_LOG_FILE)
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(file_handler)
-
-console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setFormatter(logging.Formatter('%(message)s'))
-logger.addHandler(console_handler)
+from loguru import logger
+logger.remove()
+logger.add(ASME_LOG_FILE, format="{time} - {level} - {message}", level="INFO", retention="1 day", mode="a")
+logger.add(sys.stdout, format="{message}", level="INFO")
 
 # Глобальные переменные для i18n
 CURRENT_LANG = "en"
