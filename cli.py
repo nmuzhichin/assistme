@@ -24,7 +24,7 @@ ASME_OUTPUT_FILE = os.path.join(ASME_WORK_DIR, "output.wav")
 # Значения по умолчанию для аудио-устройств и языка
 DEFAULT_CONFIG = {
     "lang": "en",           # язык по умолчанию
-    "keep_source": "false",  # сохранять исходник
+    "keep_source": "true",  # сохранять исходник
     "stream_mode": "true",   # команда record будет выполнять транскрибацию сразу после завершения записи
     "audio": {
         "input":  ":0",     # микрофон
@@ -285,10 +285,11 @@ def transcribate_command(args):
 
 def record_dispatcher(args):
     """
-    Если передан флаг stream - эмулируем непрерывную запись и транскрибацию
+    Если передан флаг stream ИЛИ выставлена настройка – эмулируем непрерывную запись и транскрибацию
     """
     record_command(args)
-    if args.stream:
+    config = load_config()
+    if args.stream or config.get('stream_mode'):
         transcribate_command(args)
 
 def get_version():
