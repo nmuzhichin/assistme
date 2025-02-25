@@ -24,6 +24,8 @@ ASME_OUTPUT_FILE = os.path.join(ASME_WORK_DIR, "output.wav")
 # Значения по умолчанию для аудио-устройств и языка
 DEFAULT_CONFIG = {
     "lang": "en",           # язык по умолчанию
+    "keep_source": "false",  # сохранять исходник
+    "stream_mode": "true",   # команда record будет выполнять транскрибацию сразу после завершения записи
     "audio": {
         "input":  ":0",     # микрофон
         "output": ":3"      # системный звук
@@ -34,6 +36,9 @@ DEFAULT_CONFIG = {
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRANSLATIONS_FILE = os.path.join(SCRIPT_DIR, "translations.json")
 
+# Глобальная переменная для файла конфигурации (можно переопределить через флаг)
+CURRENT_CONFIG_FILE = ASME_CONFIG_FILE
+
 # Создаем необходимые директории до настройки логирования
 os.makedirs(ASME_DIR, exist_ok=True)
 os.makedirs(ASME_WORK_DIR, exist_ok=True)
@@ -43,14 +48,13 @@ if not os.path.exists(ASME_LOG_FILE):
 # Настройка логирования: вывод в файл и консоль
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
 file_handler = logging.FileHandler(ASME_LOG_FILE)
-file_handler.setFormatter(formatter)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(file_handler)
 
 console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setFormatter(formatter)
+console_handler.setFormatter(logging.Formatter('%(message)s'))
 logger.addHandler(console_handler)
 
 # Глобальные переменные для i18n
@@ -72,14 +76,14 @@ def get_text(key):
 
 def run_command(cmd, cwd=None):
     """Выполняет системную команду с логированием и проверкой ошибок."""
-    logger.info(f"Executing: {cmd}")
+    logger.debug(f"Executing: {cmd}")
     result = subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
         logger.error(f"Error executing command: {cmd}")
         logger.error(f"stdout:\n{result.stdout}")
         logger.error(f"stderr:\n{result.stderr}")
         return False, result.stdout + result.stderr
-    logger.info(f"Command executed successfully: {cmd}")
+    logger.debug(f"Command executed successfully: {cmd}")
     return True, result.stdout
 
 def check_brew():
@@ -106,12 +110,13 @@ def ensure_work_dir():
 
 def load_config():
     """Загружает конфигурацию из YAML-файла, создавая дефолтную при отсутствии."""
-    if not os.path.exists(ASME_CONFIG_FILE):
+    global CURRENT_CONFIG_FILE
+    if not os.path.exists(CURRENT_CONFIG_FILE):
         logger.info("Configuration file not found, creating default.")
         save_config(DEFAULT_CONFIG)
         return DEFAULT_CONFIG
     try:
-        with open(ASME_CONFIG_FILE, "r") as f:
+        with open(CURRENT_CONFIG_FILE, "r") as f:
             config = yaml.safe_load(f)
             if not config:
                 config = DEFAULT_CONFIG
@@ -122,9 +127,10 @@ def load_config():
 
 def save_config(config):
     """Сохраняет конфигурацию в YAML-файл."""
-    with open(ASME_CONFIG_FILE, "w") as f:
+    global CURRENT_CONFIG_FILE
+    with open(CURRENT_CONFIG_FILE, "w") as f:
         yaml.dump(config, f)
-    logger.info(f"Configuration saved in {ASME_CONFIG_FILE}")
+    logger.info(f"Configuration saved in {CURRENT_CONFIG_FILE}")
 
 def install_command(args):
     """Команда install: установка Homebrew, ffmpeg, blackhole, клонирование и сборка whisper.cpp."""
@@ -199,7 +205,7 @@ def record_command(args):
                   f'-filter_complex amerge=inputs=2 "{ASME_RECORD_FILE}"')
     logger.info(get_text("recording"))
     try:
-        subprocess.run(ffmpeg_cmd, shell=True, check=True)
+        run_command(ffmpeg_cmd)
     except KeyboardInterrupt:
         logger.info(get_text("record_cancelled"))
     except subprocess.CalledProcessError as e:
@@ -217,10 +223,13 @@ def transcribate_command(args):
         logger.error(f"Recording file {ASME_RECORD_FILE} not found. Run the record command first.")
         sys.exit(1)
     
-    session_name = input(get_text("session_prompt")).strip()
-    while not re.fullmatch(r'[A-Za-z0-9_-]+', session_name):
-        print(get_text("invalid_session"))
+    try:
         session_name = input(get_text("session_prompt")).strip()
+        while not re.fullmatch(r'[A-Za-z0-9_-]+', session_name):
+            logger.warning(get_text("invalid_session"))
+            session_name = input(get_text("session_prompt")).strip()
+    except KeyboardInterrupt:
+        sys.exit(1)
     
     new_session_dir = os.path.join(ASME_DIR, f"session-{session_name}")
     if os.path.exists(new_session_dir):
@@ -262,25 +271,87 @@ def transcribate_command(args):
     else:
         logger.info(get_text("transcription_success"))
         logger.info(output)
-        print(get_text("transcription_success"))
-        print(output)
+
+    config = load_config()
+    result = None
+    if not config.get('keep_source'):
+        os.remove(TMP_ASME_RECORD_FILE)
+        os.remove(TMP_ASME_OUTPUT_FILE)
+        result = get_text("file_saved")
+    else:
+        result = get_text("files_saved")
     
-    logger.info(get_text("files_saved").format(TMP_ASME_WORK_DIR))
+    logger.info(result.format(TMP_ASME_WORK_DIR))
+
+def record_dispatcher(args):
+    """
+    Если передан флаг stream - эмулируем непрерывную запись и транскрибацию
+    """
+    record_command(args)
+    if args.stream:
+        transcribate_command(args)
 
 def get_version():
     return 'debug'
 
 def set_setting(arg):
+    """
+    Обрабатывает параметры вида: audio.input=:0 audio.output=:3
+    Валидирует ключи и значения и сохраняет обновлённые настройки в YAML.
+    """
+    config = load_config()
     for n in arg.kv:
-        k, v = n.split("=")
-        # todo: save to yaml
+        if "=" not in n:
+            logger.error(get_text("setting_invalid_format").format(n))
+            sys.exit(1)
+        key, value = n.split("=", 1)
+        parts = key.split(".")
+        if parts[0] == "audio":
+            if len(parts) != 2 or parts[1] not in ["input", "output"]:
+                logger.error(get_text("setting_invalid_key").format(key))
+                sys.exit(1)
+            if "audio" not in config or not isinstance(config["audio"], dict):
+                config["audio"] = {}
+            config["audio"][parts[1]] = value
+        elif parts[0] == "lang":
+            if value not in ["en", "ru"]:
+                logger.error(get_text("setting_invalid_value").format(key, value))
+                sys.exit(1)
+            config["lang"] = value
+        else:
+            logger.warning(get_text("setting_invalid_key").format(key))
+    save_config(config)
+    logger.info(get_text("setting_update_success"))
+
+def get_setting(arg):
+    """
+    Простое получение значения настройки по ключу
+    """
+    keys = arg.key.split('.')
+    config = load_config()
+    for key in keys:
+        if key in config:
+            config = config[key]
+    logger.info(config)
+
+def configure_default_parser(p: argparse.ArgumentParser):
+    p._optionals.title = get_text("options_help")
+    p._positionals.title = get_text("commands_help")
+
+    p.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help=get_text("help_help"))
 
 def main():
-    # Предварительный разбор для определения языка
+    # Предварительный разбор для определения языка и пути к конфигурационному файлу
     pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("-l", "--language", choices=["en", "ru"], help="")
+    pre_parser.add_argument("-l", "--language", choices=["en", "ru"])
+    pre_parser.add_argument("-c", "--config")
     pre_args, _ = pre_parser.parse_known_args()
     
+    # Если указан путь до конфигурационного файла, обновляем глобальную переменную
+    global CURRENT_CONFIG_FILE
+    if pre_args.config:
+        CURRENT_CONFIG_FILE = pre_args.config
+
     config = load_config()
     global CURRENT_LANG, TRANSLATIONS
     CURRENT_LANG = pre_args.language or config.get("lang", "en")
@@ -290,35 +361,40 @@ def main():
     
     # Создание основного парсера с локализованными описаниями
     parser = argparse.ArgumentParser(description=get_text("cli_description"), add_help=False)
-
-    opt_group = parser.add_argument_group(get_text("options_help"))
-    opt_group.add_argument('-l', '--language', choices=["en", "ru"], help=get_text("lang_help"))
-    opt_group.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help=get_text("help_help"))
-    opt_group.add_argument('-v', '--version', action='version', version=get_version(), help=get_text("version_help"))
+    parser.add_argument('-v', '--version', action='version', version=get_version(), help=get_text("version_help"))
+    parser.add_argument('-l', '--language', choices=["en", "ru"], help=get_text("lang_help"))
+    parser.add_argument('-c', '--config', help=get_text("config_help"))
+    configure_default_parser(parser)
     
     # Первый уровень
-    subparsers = parser.add_subparsers(dest="command", help="", title=get_text("commands_help"), metavar="")
+    subparsers = parser.add_subparsers(dest="command", help="", metavar="")
 
-    parser_record = subparsers.add_parser("record", help=get_text("record_help"))
-    parser_record.set_defaults(func=record_command)
+    parser_record = subparsers.add_parser("record", help=get_text("record_help"), aliases=["r", "rec"], add_help=False)
+    parser_record.add_argument("--stream", help=get_text("record_stream_help"), action='store_true')
+    parser_record.set_defaults(func=record_dispatcher)
+    configure_default_parser(parser_record)
     
-    parser_transcribate = subparsers.add_parser("transcribate", help=get_text("transcribate_help"))
+    parser_transcribate = subparsers.add_parser("transcribate", help=get_text("transcribate_help"), aliases=["t", "trb"], add_help=False)
     parser_transcribate.set_defaults(func=transcribate_command)
+    configure_default_parser(parser_transcribate)
     
     # Второй уровень
-    parser_env = subparsers.add_parser("env", help=get_text("env_help"), add_help=False)
-    env_ops_group = parser_env.add_argument_group(get_text("options_help"))
-    env_ops_group.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help=get_text("help_help"))
+    parser_env = subparsers.add_parser("env", help=get_text("env_help"), add_help=False, aliases=["e"])
+    configure_default_parser(parser_env)
     
-    sys_subparsers = parser_env.add_subparsers(dest="command", help="", title=get_text("commands_help"), metavar="")
-    parser_install = sys_subparsers.add_parser("install", help=get_text("install_help"))
+    env_subparsers = parser_env.add_subparsers(dest="command", help="", metavar="")
+    parser_install = env_subparsers.add_parser("install", help=get_text("install_help"), aliases=["i"], add_help=False, description=get_text("install_help_detailed"))
     parser_install.set_defaults(func=install_command)
+    configure_default_parser(parser_install)
 
-    parser_setting_setter = sys_subparsers.add_parser("set", help="set setting")
-    parser_setting_setter.add_argument(dest="kv", help="set key=value", nargs="...")
+    parser_setting_setter = env_subparsers.add_parser("set", help=get_text("setting_key_value"), aliases=["s"], add_help=False)
+    parser_setting_setter.add_argument(dest="kv", help=get_text("setting_key_value"), nargs="...")
     parser_setting_setter.set_defaults(func=set_setting)
-    
 
+    parser_setting_getter = env_subparsers.add_parser("get", help=get_text("getting_value_by_key"), aliases=["g"], add_help=False)
+    parser_setting_getter.add_argument(dest="key", help=get_text("getting_value_by_key"))
+    parser_setting_getter.set_defaults(func=get_setting)
+    
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
