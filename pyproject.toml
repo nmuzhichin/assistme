@@ -1,0 +1,23 @@
+[project]
+name = "assistme"
+version = "1.0.0"
+description = "Assist Me is a command-line tool that automates the process of recording and transcribing audio"
+authors = [
+    {name = "nmuzhichin",email = "nmuzhichin@yahoo.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "loguru (==0.7.3)",
+    "PyYAML (==6.0.2)",
+    "pyinstaller (>=6.12.0,<7.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+build = "assistme.pyinstaller:install"
