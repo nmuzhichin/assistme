@@ -51,7 +51,7 @@ Assist Me is a command-line tool that automates the process of recording and tra
    ```bash
    python3 -m venv venv
    source venv/bin/activate
-   pip install -r requirements.txt
+   poetry install
    ```
 
 4. Ensure Homebrew is installed on your system.

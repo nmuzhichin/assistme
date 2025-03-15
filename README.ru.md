@@ -51,7 +51,7 @@ Assist Me – это инструмент командной строки, ко�
    ```bash
    python3 -m venv venv
    source venv/bin/activate
-   pip install -r requirements.txt
+   poetry install
    ```
 
 4. Убедитесь, что у вас установлен Homebrew.
